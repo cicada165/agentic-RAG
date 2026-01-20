@@ -1,0 +1,23 @@
+# Deep Research Assistant Dependencies
+streamlit>=1.28.0
+langgraph>=0.0.20
+aiohttp>=3.9.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Optional: LangChain dependencies (for future enhancements)
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-chroma>=0.1.0
+langchain-huggingface>=0.0.1
+langchain-openai>=0.1.0
+langchain-text-splitters>=0.0.1
+
+# Optional: Legacy RAG dependencies
+rank-bm25>=0.2.2
+jieba>=0.42.1
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+torch>=2.0.0
