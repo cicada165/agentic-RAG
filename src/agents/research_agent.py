@@ -35,7 +35,16 @@ async def generate_search_queries(
     from ..models import TokenUsage
     from ..utils.monitoring import UsageTracker
     from ..utils.config import Config
+    from ..utils.cache import QueryCache
     
+    cache = QueryCache()
+    
+    # Check Cache First
+    cached_queries = cache.get(query, context)
+    if cached_queries:
+        logger.info(f"Using cached queries for: {query}")
+        return cached_queries[:max_queries], TokenUsage()
+
     # If no LLM client, use simple query expansion
     if llm_client is None:
         # Simple fallback: return the original query with variations
@@ -90,6 +99,10 @@ Return only {max_queries} lines. No numbers, no bullets, just one query per line
             if query not in queries:
                 queries.insert(0, query)
         
+        # Cache the results
+        if queries:
+            cache.set(query, context, queries)
+
         return queries[:max_queries], usage
     except Exception as e:
         logger.warning(f"Failed to generate search queries with LLM: {e}")

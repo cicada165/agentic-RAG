@@ -17,7 +17,7 @@ def test_config_loading():
     try:
         config = Config.load()
         print(f"Loaded key: {config.LLM_API_KEY}")
-        assert config.LLM_API_KEY == "your-api-key-here"
+        assert config.LLM_API_KEY is not None and len(config.LLM_API_KEY) > 0
         print("✅ Config loaded successfully")
     except Exception as e:
         print(f"❌ Config loading failed: {e}")

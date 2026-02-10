@@ -1,115 +1,99 @@
 """
-Main entry point for Agentic RAG system
+Main CLI entry point for Deep Research Assistant
+Uses the modular agents from src/
 """
+import asyncio
+import uuid
 import argparse
-import os
-from agentic_rag import create_agentic_rag_agent, query_agent
-from offline_pipeline import build_knowledge_base
-from config import DEFAULT_DOCUMENT_PATH
+import sys
+from src.agents.orchestrator import run_research_workflow
+from src.models import ResearchStatus
+from src.utils.config import Config, ConfigError
+from src.utils.logger import setup_logger
 
+logger = setup_logger(__name__)
 
-def build_kb_mode(document_path: str):
-    """Build knowledge base from documents"""
-    print("Building knowledge base...")
-    if not os.path.exists(document_path):
-        print(f"Error: Document file not found: {document_path}")
-        print("Please create a document file or update DEFAULT_DOCUMENT_PATH in config.py")
-        return
+async def query_mode(query: str):
+    """Query the modular research system via CLI"""
+    print(f"\n{'='*60}")
+    print(f"Query: {query}")
+    print(f"{'='*60}\n")
     
-    build_knowledge_base(document_path)
-    print("\nKnowledge base built successfully!")
-    print("You can now run the agent with: python main.py --query 'your question here'")
-
-
-def query_mode(query: str):
-    """Query the agentic RAG system"""
-    print("Initializing Agentic RAG Agent...")
+    # Load configuration
     try:
-        agent = create_agentic_rag_agent()
-        print("Agent initialized successfully!\n")
-        
-        print(f"{'='*60}")
-        print(f"Query: {query}")
-        print(f"{'='*60}")
-        
-        answer, response = query_agent(agent, query)
-        
-        print(f"\nAnswer:\n{answer}")
-        print(f"\n{'='*60}")
-        
-    except Exception as e:
+        Config.load()
+    except ConfigError as e:
         print(f"Error: {e}")
-        print("\nMake sure you have:")
-        print("1. Built the knowledge base (run: python main.py --build)")
-        print("2. Set your DEEPSEEK_API_KEY in config.py or as environment variable")
+        return
 
+    query_id = str(uuid.uuid4())
+    
+    def cli_stream_callback(event):
+        """Simple callback to show progress in CLI"""
+        if event.event_type == "status":
+            msg = event.data.get("message", "")
+            agent = f"[{event.agent.upper()}] " if event.agent else ""
+            print(f"{agent}{msg}")
+        elif event.event_type == "source":
+            source = event.data.get("source", {})
+            title = source.get("title", "Unknown Source")
+            url = source.get("url", "")
+            print(f"  - Found: {title} ({url})")
+        elif event.event_type == "error":
+            print(f"Error: {event.data.get('error')}")
 
-def interactive_mode():
-    """Interactive query mode"""
-    print("Initializing Agentic RAG Agent...")
     try:
-        agent = create_agentic_rag_agent()
-        print("Agent initialized successfully!")
-        print("Enter your queries (type 'exit' or 'quit' to stop):\n")
+        final_state = await run_research_workflow(
+            query=query,
+            query_id=query_id,
+            stream_callback=cli_stream_callback
+        )
         
-        while True:
-            query = input("Query: ").strip()
+        if final_state.status == ResearchStatus.COMPLETED:
+            print(f"\n{'='*60}")
+            print("FINAL REPORT")
+            print(f"{'='*60}\n")
+            print(final_state.final_report)
+            print(f"\n{'='*60}")
+            print(f"Sources used: {len(final_state.verified_sources)}")
+            print(f"Execution time: {final_state.execution_time_seconds:.2f}s")
+            print(f"{'='*60}")
+        elif final_state.status == ResearchStatus.FAILED:
+            print(f"\nResearch failed: {final_state.error_message}")
             
-            if query.lower() in ['exit', 'quit', 'q']:
-                print("Goodbye!")
+    except Exception as e:
+        print(f"\nAn error occurred: {e}")
+
+async def interactive_mode():
+    """Interactive CLI mode"""
+    print("Deep Research Assistant - Interactive CLI")
+    print("Enter your research questions below. Type 'exit' to quit.\n")
+    
+    while True:
+        try:
+            query = input("Research Question: ").strip()
+            if query.lower() in ["exit", "quit", "q"]:
                 break
-            
             if not query:
                 continue
-            
-            print(f"\n{'='*60}")
-            answer, response = query_agent(agent, query)
-            print(f"\nAnswer:\n{answer}")
-            print(f"{'='*60}\n")
-            
-    except Exception as e:
-        print(f"Error: {e}")
-        print("\nMake sure you have:")
-        print("1. Built the knowledge base (run: python main.py --build)")
-        print("2. Set your DEEPSEEK_API_KEY in config.py or as environment variable")
+                
+            await query_mode(query)
+            print("\n" + "-"*60 + "\n")
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
 
-
-def main():
-    parser = argparse.ArgumentParser(description="Agentic RAG System")
-    parser.add_argument(
-        '--build',
-        action='store_true',
-        help='Build the knowledge base from documents'
-    )
-    parser.add_argument(
-        '--document',
-        type=str,
-        default=DEFAULT_DOCUMENT_PATH,
-        help='Path to document file for building knowledge base'
-    )
-    parser.add_argument(
-        '--query',
-        type=str,
-        help='Query to ask the agent'
-    )
-    parser.add_argument(
-        '--interactive',
-        action='store_true',
-        help='Run in interactive mode'
-    )
+async def main():
+    parser = argparse.ArgumentParser(description="Deep Research Assistant CLI")
+    parser.add_argument("--query", type=str, help="Research question to answer")
+    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
     
     args = parser.parse_args()
     
-    if args.build:
-        build_kb_mode(args.document)
-    elif args.query:
-        query_mode(args.query)
-    elif args.interactive:
-        interactive_mode()
-    else:
-        # Default to interactive mode
-        interactive_mode()
-
+    if args.query:
+        await query_mode(args.query)
+    elif args.interactive or len(sys.argv) == 1:
+        await interactive_mode()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

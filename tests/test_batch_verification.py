@@ -7,6 +7,9 @@ from src.models import Source
 
 @pytest.mark.asyncio
 async def test_verify_sources_batch_success():
+    from src.utils.cache import VerificationCache
+    VerificationCache().clear()
+    
     # Setup mock sources
     sources = [
         Source(
@@ -33,7 +36,7 @@ async def test_verify_sources_batch_success():
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
     
     # Execute batch verification
-    results = await verify_sources_batch(sources, "test query", mock_llm)
+    results, usage = await verify_sources_batch(sources, "test query", mock_llm)
     
     # Assertions
     assert len(results) == 2
@@ -45,25 +48,31 @@ async def test_verify_sources_batch_success():
 
 @pytest.mark.asyncio
 async def test_verify_sources_batch_fallback():
+    from src.utils.cache import VerificationCache
+    VerificationCache().clear()
+    
     # Setup mock sources
     sources = [
         Source(
             url="http://example.com/1",
             title="Source 1",
-            snippet="Valid snippet long enough to pass filter.",
+            snippet="Valid snippet long enough to pass the minimum length filter of fifty characters.",
             relevance_score=0.5,
             accessed_at=datetime.now()
         )
     ]
     
     # Execute without LLM client (should fallback to relevance score)
-    results = await verify_sources_batch(sources, "test query", None)
+    results, usage = await verify_sources_batch(sources, "test query", None)
     
     assert len(results) == 1
     assert results[0][0] is True # 0.5 > 0.4 threshold
 
 @pytest.mark.asyncio
 async def test_verify_sources_batch_garbage_filter():
+    from src.utils.cache import VerificationCache
+    VerificationCache().clear()
+    
     # Setup mock sources with short snippet
     sources = [
         Source(
@@ -78,7 +87,7 @@ async def test_verify_sources_batch_garbage_filter():
     mock_llm = MagicMock()
     
     # Execute
-    results = await verify_sources_batch(sources, "test query", mock_llm)
+    results, usage = await verify_sources_batch(sources, "test query", mock_llm)
     
     assert len(results) == 1
     assert results[0][0] is False # Rejected by hard filter

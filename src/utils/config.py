@@ -47,6 +47,11 @@ class Config:
     STREAM_UPDATE_INTERVAL_MS: int = 500
     MAX_HISTORY_ITEMS: int = 10
     
+    # Cache Settings
+    CACHE_TTL_VERIFICATION_HOURS: int = 24
+    CACHE_TTL_QUERY_HOURS: int = 1
+
+    
     @classmethod
     def load(cls) -> "Config":
         """
