@@ -3,6 +3,8 @@ Main Streamlit application entry point for Deep Research Assistant
 """
 import asyncio
 import uuid
+import threading
+import time
 import streamlit as st
 from typing import Optional
 
@@ -96,7 +98,6 @@ def main() -> None:
             st.session_state[task_key] = "running"
             
             # Run async workflow in background thread to avoid blocking UI
-            import threading
             
             def run_async_workflow():
                 """Run the async workflow in a separate event loop"""
@@ -115,8 +116,18 @@ def main() -> None:
                     )
                     
                     # Update final state (thread-safe via session state)
-                    update_state(query_id, final_state)
-                    st.session_state[task_key] = "completed"
+                    # Use a fresh get_current_state to avoid overwriting updates made by main thread
+                    # (like cancellation)
+                    # However, strictly speaking, we are in a different thread.
+                    # We should check if cancelled before writing.
+                    # But since st.session_state is thread-safe wrapper, we can just write.
+                    # To be safe, check status.
+                    current_final = get_current_state(query_id)
+                    if current_final and current_final.status == ResearchStatus.CANCELLED:
+                        logger.info("Research cancelled, ignoring final state update from thread.")
+                    else:
+                        update_state(query_id, final_state)
+                        st.session_state[task_key] = "completed"
                     
                     new_loop.close()
                 except Exception as e:
@@ -137,7 +148,6 @@ def main() -> None:
             # Show initial spinner
             with st.spinner("Starting research..."):
                 # Small delay to allow thread to start
-                import time
                 time.sleep(0.1)
         
         # Check task status and handle accordingly
@@ -146,7 +156,6 @@ def main() -> None:
             st.info("🔍 Research in progress... This may take a moment.")
             # Trigger rerun to check status again (Streamlit will handle this)
             # Use a small delay to prevent excessive reruns
-            import time
             time.sleep(0.5)
             st.rerun()
         
@@ -162,6 +171,11 @@ def main() -> None:
             state = get_current_state(query_id)
             if state and state.error_message:
                 render_error_message(state.error_message)
+                
+        elif task_status == "cancelled":
+             # Clean up task status
+             del st.session_state[task_key]
+             st.rerun()
     
     # Display current research state
     current_query_id = st.session_state.get("current_query_id")
@@ -169,8 +183,20 @@ def main() -> None:
         state = get_current_state(current_query_id)
         
         if state:
-            # Render status panel
-            render_status_panel(state)
+            # Render status panel and check for stop
+            stop_clicked = render_status_panel(state)
+            
+            if stop_clicked:
+                # Handle cancellation
+                state.status = ResearchStatus.CANCELLED
+                update_state(current_query_id, state)
+                
+                # Mark task as cancelled
+                task_key = f"research_task_{current_query_id}"
+                if task_key in st.session_state:
+                    st.session_state[task_key] = "cancelled"
+                
+                st.rerun()
             
             # Main content area
             col1, col2 = st.columns([2, 1])
@@ -203,6 +229,10 @@ def main() -> None:
                 elif state.status == ResearchStatus.FAILED:
                     if state.error_message:
                         render_error_message(state.error_message)
+                elif state.status == ResearchStatus.CANCELLED:
+                    st.warning("🛑 Research cancelled by user.")
+                elif state.status == ResearchStatus.NEEDS_REVISION:
+                    st.info(f"🔄 Revision needed: {state.error_message or 'Improving research quality...'}")
                 
                 # Show conflicts if any
                 if state.conflicting_claims:

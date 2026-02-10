@@ -29,12 +29,15 @@ def render_message_history(messages: List[dict]) -> None:
             st.markdown(message.get("content", ""))
 
 
-def render_status_panel(state: ResearchState) -> None:
+def render_status_panel(state: ResearchState) -> bool:
     """
     Renders research status panel with progress indicators.
     
     Args:
         state: Current ResearchState instance
+        
+    Returns:
+        bool: True if 'Stop Research' button was clicked, False otherwise
     """
     st.sidebar.header("Research Status")
     
@@ -47,32 +50,59 @@ def render_status_panel(state: ResearchState) -> None:
         "writing": "🟠",
         "completed": "🟢",
         "failed": "🔴",
-        "cancelled": "⚫"
+        "cancelled": "⚫",
+        "needs_revision": "🟣"
     }
     
+    # Calculate progress
+    progress_map = {
+        "pending": 0,
+        "researching": 25,
+        "needs_revision": 35,
+        "reviewing": 60,
+        "writing": 90,
+        "completed": 100,
+        "failed": 100,
+        "cancelled": 100
+    }
+    progress = progress_map.get(status, 0)
+    
     status_icon = status_colors.get(status, "⚪")
-    st.sidebar.markdown(f"**Status:** {status_icon} {status.title()}")
+    st.sidebar.markdown(f"**Status:** {status_icon} {status.replace('_', ' ').title()}")
+    st.sidebar.progress(progress / 100)
     
     # Current agent
     if state.current_agent:
         st.sidebar.markdown(f"**Current Agent:** {state.current_agent.title()}")
+        
+    # Stop button for active states
+    stop_clicked = False
+    if status in ["researching", "reviewing", "writing", "pending", "needs_revision"]:
+        if st.sidebar.button("Stop Research", type="primary"):
+            stop_clicked = True
     
     # Progress metrics
     st.sidebar.markdown("---")
-    st.sidebar.metric("Sources Found", len(state.sources))
-    st.sidebar.metric("Verified Sources", len(state.verified_sources))
-    st.sidebar.metric("Confidence Score", f"{state.confidence_score:.2f}")
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        st.metric("Sources", len(state.sources))
+        st.metric("Confidence", f"{state.confidence_score:.2f}")
+    with col2:
+        st.metric("Verified", len(state.verified_sources))
+        st.metric("Iteration", f"{state.iteration_count}/{state.max_iterations}")
     
     # Execution time
     if state.execution_time_seconds:
-        st.sidebar.metric("Execution Time", f"{state.execution_time_seconds:.1f}s")
+        st.sidebar.metric("Time", f"{state.execution_time_seconds:.1f}s")
     
     # Search queries
     if state.search_queries:
         st.sidebar.markdown("---")
-        st.sidebar.markdown("**Search Queries:**")
-        for i, query in enumerate(state.search_queries[:5], 1):
-            st.sidebar.text(f"{i}. {query[:50]}..." if len(query) > 50 else f"{i}. {query}")
+        with st.sidebar.expander("Search Queries", expanded=False):
+            for i, query in enumerate(state.search_queries, 1):
+                st.text(f"{i}. {query}")
+                
+    return stop_clicked
 
 
 def render_report_viewer(report: str, citations: List[str]) -> None:
@@ -84,6 +114,15 @@ def render_report_viewer(report: str, citations: List[str]) -> None:
         citations: List of citation URLs
     """
     st.markdown("## Research Report")
+    
+    # Add download button
+    st.download_button(
+        label="Download Report",
+        data=report,
+        file_name="research_report.md",
+        mime="text/markdown"
+    )
+    
     st.markdown(report)
     
     if citations:
@@ -100,5 +139,7 @@ def render_error_message(error: str) -> None:
     Args:
         error: Error message string
     """
-    st.error(f"❌ Error: {error}")
-    st.info("Please try again or check your configuration settings.")
+    with st.container():
+        st.error(f"❌ **Research Failed**")
+        st.markdown(f"**Error Details:** {error}")
+        st.info("💡 **Suggestion:** Try rephrasing your query or checking your API keys in `.env`.")

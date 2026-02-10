@@ -14,10 +14,13 @@ class Config:
     """Application configuration loaded from environment"""
     
     # API Keys (loaded from st.secrets or .env)
-    OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-4o-mini"  # Default to cost-effective model
+    DEEPSEEK_API_KEY: str
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_MODEL: str = "deepseek-chat"
+    
     SEARCH_API_KEY: Optional[str] = None
     SEARCH_API_PROVIDER: Literal["tavily", "serper", "custom"] = "tavily"
+    TAVILY_API_KEY: Optional[str] = None  # Specific key for Tavily if used
     
     # Workflow Settings
     MAX_RESEARCH_ITERATIONS: int = 5
@@ -48,43 +51,63 @@ class Config:
         """
         config = cls()
         
+        # Track what was loaded from secrets to avoid overriding with env vars if present
+        secrets_loaded = set()
+        
         # Try to load from Streamlit secrets first (if available)
         try:
             import streamlit as st
             # Check if we're in a Streamlit runtime context
-            # Accessing st.secrets outside of Streamlit runtime raises an error
             try:
                 if hasattr(st, 'secrets'):
                     secrets = st.secrets
-                    # Only access if secrets file exists (check without triggering error)
                     if secrets:
-                        config.OPENAI_API_KEY = secrets.get("OPENAI_API_KEY", "")
-                        config.OPENAI_MODEL = secrets.get("OPENAI_MODEL", "gpt-4o-mini")
-                        config.SEARCH_API_KEY = secrets.get("SEARCH_API_KEY", "")
-                        config.SEARCH_API_PROVIDER = secrets.get("SEARCH_API_PROVIDER", "tavily")
+                        if "DEEPSEEK_API_KEY" in secrets:
+                            config.DEEPSEEK_API_KEY = secrets["DEEPSEEK_API_KEY"]
+                            secrets_loaded.add("DEEPSEEK_API_KEY")
+                        
+                        if "DEEPSEEK_MODEL" in secrets:
+                            config.DEEPSEEK_MODEL = secrets["DEEPSEEK_MODEL"]
+                            secrets_loaded.add("DEEPSEEK_MODEL")
+                            
+                        if "SEARCH_API_KEY" in secrets:
+                            config.SEARCH_API_KEY = secrets["SEARCH_API_KEY"]
+                            secrets_loaded.add("SEARCH_API_KEY")
+                            
+                        if "SEARCH_API_PROVIDER" in secrets:
+                            config.SEARCH_API_PROVIDER = secrets["SEARCH_API_PROVIDER"]
+                            secrets_loaded.add("SEARCH_API_PROVIDER")
+                            
+                        if "TAVILY_API_KEY" in secrets:
+                            config.TAVILY_API_KEY = secrets["TAVILY_API_KEY"]
+                            secrets_loaded.add("TAVILY_API_KEY")
             except Exception:
                 # Not in Streamlit runtime context or secrets not available
-                # Fall through to environment variables
                 pass
         except (ImportError, AttributeError):
-            # Streamlit not installed or not available, use environment variables
             pass
         
-        # Fall back to environment variables
-        if not hasattr(config, 'OPENAI_API_KEY') or not config.OPENAI_API_KEY:
-            config.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+        # Fall back to environment variables for anything not loaded from secrets
         
-        if not hasattr(config, 'OPENAI_MODEL') or not config.OPENAI_MODEL:
-            config.OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        if "DEEPSEEK_API_KEY" not in secrets_loaded:
+            config.DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
         
-        if not config.SEARCH_API_KEY:
+        if "DEEPSEEK_MODEL" not in secrets_loaded:
+            config.DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            
+        if "SEARCH_API_KEY" not in secrets_loaded:
             config.SEARCH_API_KEY = os.getenv("SEARCH_API_KEY", "")
-        
-        # Load search provider from environment if not already set from secrets
-        # Only override if it's still the default "tavily" (meaning it wasn't set from secrets)
-        if not hasattr(config, 'SEARCH_API_PROVIDER') or config.SEARCH_API_PROVIDER == "tavily":
-            env_provider = os.getenv("SEARCH_API_PROVIDER", "tavily")
-            if env_provider in ["tavily", "serper", "custom"]:
+            
+        if "TAVILY_API_KEY" not in secrets_loaded:
+             config.TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+        # Provider logic: 
+        # 1. If secrets set it, use that (done above).
+        # 2. If not, check env var.
+        # 3. If neither, default (tavily) remains.
+        if "SEARCH_API_PROVIDER" not in secrets_loaded:
+            env_provider = os.getenv("SEARCH_API_PROVIDER")
+            if env_provider and env_provider in ["tavily", "serper", "custom"]:
                 config.SEARCH_API_PROVIDER = env_provider
         
         # Load other settings from environment with defaults
@@ -98,10 +121,14 @@ class Config:
         config.STREAM_UPDATE_INTERVAL_MS = int(os.getenv("STREAM_UPDATE_INTERVAL_MS", "500"))
         config.MAX_HISTORY_ITEMS = int(os.getenv("MAX_HISTORY_ITEMS", "10"))
         
-        # Validate required API keys
-        if not config.OPENAI_API_KEY or config.OPENAI_API_KEY == "your-api-key-here":
-            raise ConfigError(
-                "OPENAI_API_KEY is required. Set it in .env file or Streamlit secrets."
-            )
+        # Ensure SEARCH_API_KEY is populated if TAVILY_API_KEY is present and provider is tavily
+        if config.SEARCH_API_PROVIDER == "tavily" and not config.SEARCH_API_KEY and config.TAVILY_API_KEY:
+            config.SEARCH_API_KEY = config.TAVILY_API_KEY
         
+        # Validate required API keys
+        if not hasattr(config, 'DEEPSEEK_API_KEY') or not config.DEEPSEEK_API_KEY or config.DEEPSEEK_API_KEY == "your-api-key-here":
+            raise ConfigError(
+                "DEEPSEEK_API_KEY is required. Set it in .env file or Streamlit secrets."
+            )
+            
         return config
