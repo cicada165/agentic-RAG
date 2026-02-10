@@ -3,7 +3,7 @@ Research Agent - Performs web search and collects sources
 """
 import asyncio
 import aiohttp
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Tuple
 from datetime import datetime
 
 from ..models import Source, ResearchAgentResponse
@@ -19,7 +19,7 @@ async def generate_search_queries(
     context: Optional[str] = None,  # Changed to str to accept error messages
     max_queries: int = 5,
     llm_client: Optional[Any] = None
-) -> List[str]:
+) -> Tuple[List[str], Any]:
     """
     Generates optimized search queries from user query.
     
@@ -30,8 +30,12 @@ async def generate_search_queries(
         llm_client: LLM client instance (loaded from config if None)
         
     Returns:
-        List[str]: List of search query strings
+        tuple[List[str], TokenUsage]: (queries, token_usage)
     """
+    from ..models import TokenUsage
+    from ..utils.monitoring import UsageTracker
+    from ..utils.config import Config
+    
     # If no LLM client, use simple query expansion
     if llm_client is None:
         # Simple fallback: return the original query with variations
@@ -41,7 +45,7 @@ async def generate_search_queries(
             if len(words) > 1:
                 queries.append(" ".join(words[:len(words)//2]))
                 queries.append(" ".join(words[len(words)//2:]))
-        return queries[:max_queries]
+        return queries[:max_queries], TokenUsage()
     
     try:
         # UPDATED PROMPT: Use error message context to generate better queries
@@ -57,6 +61,11 @@ Return only {max_queries} lines. No numbers, no bullets, just one query per line
 
         # Use LLM to generate queries
         response = await llm_client.ainvoke(prompt)
+        
+        # Extract usage
+        config = Config.load()
+        usage = UsageTracker.extract_usage(response, config.LLM_MODEL)
+        
         content = response.content if hasattr(response, 'content') else str(response)
         
         # Parse queries from response (one per line)
@@ -81,7 +90,7 @@ Return only {max_queries} lines. No numbers, no bullets, just one query per line
             if query not in queries:
                 queries.insert(0, query)
         
-        return queries[:max_queries]
+        return queries[:max_queries], usage
     except Exception as e:
         logger.warning(f"Failed to generate search queries with LLM: {e}")
         # Fallback to simple variations
@@ -91,7 +100,7 @@ Return only {max_queries} lines. No numbers, no bullets, just one query per line
             if len(words) > 1:
                 queries.append(" ".join(words[:len(words)//2]))
                 queries.append(" ".join(words[len(words)//2:]))
-        return queries[:max_queries]
+        return queries[:max_queries], TokenUsage()
 
 
 async def perform_web_search(
@@ -267,14 +276,34 @@ async def research_node(state: dict) -> dict:
             logger.warning(f"Could not create LLM client: {e}. Using fallback query generation.")
             llm_client = None
         
-        # PASS FEEDBACK TO BRAIN - The Agent now "hears" the complaint
-        search_queries = await generate_search_queries(
-            query,
-            context=previous_error,  # Pass error message as context
-            max_queries=5,
-            llm_client=llm_client
-        )
-        state["search_queries"] = search_queries
+        # 1. Generate search queries
+        try:
+            search_queries, usage = await generate_search_queries(
+                query,
+                context=previous_error,  # Pass error message as context
+                max_queries=config.MAX_SEARCH_QUERIES,
+                llm_client=llm_client
+            )
+            state["search_queries"] = search_queries
+        except Exception as e:
+            msg = f"Failed to generate search queries using {config.LLM_MODEL}: {str(e)}"
+            logger.error(msg)
+            state["status"] = ResearchStatus.FAILED.value
+            state["error_message"] = msg
+            return state
+        
+        # Track usage
+        if "usage" not in state or state["usage"] is None:
+            from ..models import TokenUsage
+            state["usage"] = TokenUsage().model_dump()
+            
+        current_usage = state["usage"]
+        # Update usage (assuming dict for state)
+        current_usage["prompt_tokens"] = current_usage.get("prompt_tokens", 0) + usage.prompt_tokens
+        current_usage["completion_tokens"] = current_usage.get("completion_tokens", 0) + usage.completion_tokens
+        current_usage["total_tokens"] = current_usage.get("total_tokens", 0) + usage.total_tokens
+        current_usage["estimated_cost_usd"] = current_usage.get("estimated_cost_usd", 0.0) + usage.estimated_cost_usd
+        state["usage"] = current_usage
         
         # Perform searches concurrently
         search_tasks = [
@@ -292,9 +321,10 @@ async def research_node(state: dict) -> dict:
         sources = []
         raw_results = []
         
-        for results in all_results:
+        for i, results in enumerate(all_results):
             if isinstance(results, Exception):
-                logger.warning(f"Search failed: {results}")
+                query_text = search_queries[i] if i < len(search_queries) else "unknown"
+                logger.warning(f"Search failed for query '{query_text}' using {config.SEARCH_API_PROVIDER}: {results}")
                 continue
             
             raw_results.extend(results)

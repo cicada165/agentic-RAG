@@ -44,11 +44,17 @@
 ### 1.2 Technology Stack
 - **Frontend**: Streamlit (Python web framework)
 - **Backend Orchestration**: LangGraph (workflow management)
-- **LLM**: DeepSeek API (configurable via environment)
+- **LLM**: Configurable (DeepSeek, GitHub Models, OpenAI) via environment
 - **Search**: Web search API (Tavily, Serper, or custom)
 - **State Management**: Pydantic models
 - **Async Framework**: asyncio, aiohttp
 - **Caching**: In-memory (Redis optional for production)
+
+### 1.3 Architecture Documentation
+For detailed architectural diagrams and flows, please refer to:
+- [Architecture Overview](docs/architecture/ARCHITECTURE_OVERVIEW.md)
+- [Data Flow & State](docs/architecture/DATA_FLOW.md)
+- [Agent Workflow](docs/architecture/AGENT_WORKFLOW.md)
 
 ---
 
@@ -71,6 +77,13 @@ class ResearchStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     NEEDS_REVISION = "needs_revision"  # Quality-based revision loop trigger
+
+class TokenUsage(BaseModel):
+    """Token usage and cost tracking"""
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    total_tokens: int = Field(default=0)
+    estimated_cost_usd: float = Field(default=0.0)
 
 class Source(BaseModel):
     """Individual source from research"""
@@ -132,6 +145,9 @@ class ResearchState(BaseModel):
     draft_report: str = Field(default="", description="Draft markdown report (updated incrementally)")
     final_report: Optional[str] = Field(default=None, description="Final markdown report")
     citations: List[str] = Field(default_factory=list, description="Citation URLs for report in order of appearance")
+    
+    # API Usage & Cost Monitoring
+    usage: TokenUsage = Field(default_factory=TokenUsage, description="Cumulative token usage and cost")
     
     # Metadata
     created_at: datetime = Field(default_factory=datetime.now)
@@ -669,9 +685,9 @@ class Config:
     
     # API Keys (loaded from st.secrets or .env)
     # CRITICAL: No hardcoded defaults - must raise ConfigError if missing
-    DEEPSEEK_API_KEY: str  # Required - raises ConfigError if missing
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
-    DEEPSEEK_MODEL: str = "deepseek-chat"
+    LLM_API_KEY: str  # Required - raises ConfigError if missing
+    LLM_BASE_URL: str = "https://api.deepseek.com"
+    LLM_MODEL: str = "deepseek-chat"
     SEARCH_API_KEY: Optional[str] = None  # Optional - some providers don't need it
     SEARCH_API_PROVIDER: Literal["tavily", "serper", "custom"] = "tavily"
     TAVILY_API_KEY: Optional[str] = None  # Required if provider is "tavily"

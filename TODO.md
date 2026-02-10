@@ -5,20 +5,20 @@
 **Status**: Blocking - These issues must be resolved first
 
 ### Priority 1: Security Fixes
-- [ ] **Fix 1.1**: Remove hardcoded API key default from `config.py:13` - raise ConfigError if key is missing instead of using placeholder
-- [ ] **Fix 1.2**: Create `.env.example` file with all required environment variables (DEEPSEEK_API_KEY, SEARCH_API_PROVIDER, TAVILY_API_KEY, etc.)
+- [x] **Fix 1.1**: Remove hardcoded API key default from `config.py:13`
+- [x] **Fix 1.2**: Create `.env.example` file with all required environment variables
 
 ### Priority 2: Critical Logic Fixes
-- [ ] **Fix 2.1**: Replace `asyncio.run()` in `src/main.py:94` with proper async Streamlit pattern (use `asyncio.create_task()` or Streamlit's async support)
-- [ ] **Fix 2.2**: Fix streaming callback in `src/utils/streaming.py:88` - implement proper async-safe UI update mechanism
-- [ ] **Fix 2.3**: Fix config provider logic in `src/utils/config.py:80-81` - correct conditional logic for provider selection
-- [ ] **Fix 2.4**: Add missing `Source` import in `src/agents/orchestrator.py:265` - add `from ..models import Source`
+- [x] **Fix 2.1**: Replace `asyncio.run()` in `src/main.py:94` with proper async Streamlit pattern
+- [x] **Fix 2.2**: Fix streaming callback in `src/utils/streaming.py:88`
+- [x] **Fix 2.3**: Fix config provider logic in `src/utils/config.py:80-81`
+- [x] **Fix 2.4**: Add missing `Source` import in `src/agents/orchestrator.py:265`
 
 ### Priority 3: UX Improvements
-- [ ] **Fix 3.1**: Implement proper loading states with progress indicators during async operations
-- [ ] **Fix 3.2**: Add cancellation mechanism for ongoing research operations
-- [ ] **Fix 3.3**: Review and improve error messages across all error paths
-- [ ] **Fix 3.4**: Fix state management to prevent race conditions with concurrent queries
+- [x] **Fix 3.1**: Implement proper loading states with progress indicators
+- [x] **Fix 3.2**: Add cancellation mechanism for ongoing research operations
+- [x] **Fix 3.3**: Review and improve error messages
+- [x] **Fix 3.4**: Fix state management to prevent race conditions
 
 ---
 
@@ -269,61 +269,28 @@ Based on @Orchestrator_Tasks from PROJECT_CONTEXT.md
 
 ### Task 8.1: High Priority Performance Optimizations
 
-#### Task 8.1.1: Batch Source Verification
-- [ ] **Current Issue**: Verifies sources one-by-one, causing N LLM API calls for N sources
-- [ ] **Solution**: Batch multiple sources in single LLM call
-- [ ] **Impact**: Reduces API calls and latency significantly
-- [ ] **File**: `src/agents/reviewer_agent.py`
-- [ ] **Implementation**: Create `verify_sources_batch()` function that takes multiple sources and returns batch verification results
+#### Task 8.1.1: Batch Source Verification ✅
+- [x] **Current Issue**: Verifies sources one-by-one, causing N LLM API calls for N sources
+- [x] **Solution**: Batch multiple sources in single LLM call
+- [x] **Impact**: Reduces API calls and latency significantly
 
-#### Task 8.1.2: Cache LLM Verification Results
-- [ ] **Current Issue**: Verifies same source multiple times if revision occurs
-- [ ] **Solution**: Cache verification results by URL hash
-- [ ] **Impact**: Reduces redundant API calls
-- [ ] **Files**: 
-  - [ ] Create `src/utils/cache.py` for caching utilities
-  - [ ] Update `src/agents/reviewer_agent.py` to use cache
-- [ ] **Implementation**: 
-  - [ ] Create cache key from URL hash
-  - [ ] Store verification results (is_verified, confidence_score)
-  - [ ] Check cache before LLM call
-  - [ ] TTL: 24 hours (sources may change)
+#### Task 8.1.2: Cache LLM Verification Results ✅
+- [x] **Current Issue**: Verifies same source multiple times if revision occurs
+- [x] **Solution**: Cache verification results by URL hash
+- [x] **Impact**: Reduces redundant API calls
 
-#### Task 8.1.3: Monitor API Usage & Costs
-- [ ] **Current Issue**: No tracking of LLM API usage/costs
-- [ ] **Solution**: Add metrics for LLM calls per query
-- [ ] **Impact**: Better cost visibility and optimization
-- [ ] **Files**:
-  - [ ] Create `src/utils/metrics.py` for metrics tracking
-  - [ ] Update `src/utils/logger.py` to include metrics
-  - [ ] Update `src/agents/research_agent.py` to track query generation calls
-  - [ ] Update `src/agents/reviewer_agent.py` to track verification calls
-- [ ] **Implementation**:
-  - [ ] Track: number of LLM calls, tokens used, cost estimate
-  - [ ] Log metrics per query_id
-  - [ ] Add summary metrics to final state
+#### Task 8.1.3: Monitor API Usage & Costs ✅
+- [x] **Current Issue**: No tracking of LLM API usage/costs
+- [x] **Solution**: Add metrics for LLM calls per query
+- [x] **Impact**: Better cost visibility and optimization
 
-#### Task 8.1.4: Make Quality Threshold Configurable
-- [ ] **Current Issue**: Hardcoded `min_verified_sources = 2` in `review_node`
-- [ ] **Solution**: Add to `Config` class and load from environment
-- [ ] **Impact**: Allows users to adjust quality requirements
-- [ ] **Files**: 
-  - [ ] Update `src/utils/config.py` to add `MIN_VERIFIED_SOURCES` setting
-  - [ ] Update `src/agents/reviewer_agent.py:177` to use config value
-- [ ] **Implementation**:
-  - [ ] Add `MIN_VERIFIED_SOURCES: int = 2` to Config class
-  - [ ] Load from environment variable `MIN_VERIFIED_SOURCES`
-  - [ ] Update review_node to use `config.MIN_VERIFIED_SOURCES`
+#### Task 8.1.4: Make Quality Threshold Configurable ✅
+- [x] **Current Issue**: Hardcoded `min_verified_sources = 2` in `review_node`
+- [x] **Solution**: Add to `Config` class and load from environment
 
-#### Task 8.1.5: Enhance Error Messages for Research Agent
-- [ ] **Current Issue**: Generic message "Try broader search terms"
-- [ ] **Solution**: More specific feedback based on failure reason
-- [ ] **Impact**: Better query refinement in next iteration
-- [ ] **File**: `src/agents/reviewer_agent.py:193`
-- [ ] **Implementation**:
-  - [ ] Analyze why sources failed (snippet too short, LLM rejected, etc.)
-  - [ ] Generate specific feedback: "Try synonyms for X", "Break into sub-questions", "Use more specific terms"
-  - [ ] Use LLM to generate better error messages if needed
+#### Task 8.1.5: Enhance Error Messages for Research Agent ✅
+- [x] **Current Issue**: Generic message "Try broader search terms"
+- [x] **Solution**: More specific feedback based on failure reason
 
 #### Task 8.1.6: Add Revision Loop Metrics
 - [ ] **Current Issue**: No logging/metrics for revision frequency

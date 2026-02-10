@@ -13,7 +13,7 @@ except ImportError:
     StateGraph = None
     END = None
 
-from ..models import ResearchState, ResearchStatus, StreamEvent, Source
+from ..models import ResearchState, ResearchStatus, StreamEvent, Source, TokenUsage
 from .research_agent import research_node
 from .reviewer_agent import review_node
 from .writer_agent import write_node
@@ -41,6 +41,7 @@ class GraphState(TypedDict):
     citations: list
     error_message: Optional[str]
     execution_time_seconds: Optional[float]
+    usage: dict
 
 
 def create_research_graph() -> Optional[StateGraph]:
@@ -190,7 +191,8 @@ async def run_research_workflow(
         "final_report": None,
         "citations": [],
         "error_message": None,
-        "execution_time_seconds": None
+        "execution_time_seconds": None,
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "estimated_cost_usd": 0.0}
     }
     
     # Emit initial status
@@ -324,7 +326,8 @@ async def run_research_workflow(
             final_report=state.get("final_report"),
             citations=state.get("citations", []),
             error_message=state.get("error_message"),
-            execution_time_seconds=execution_time
+            execution_time_seconds=execution_time,
+            usage=TokenUsage(**state.get("usage", {})) if state.get("usage") else TokenUsage()
         )
         
         return research_state

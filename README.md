@@ -10,6 +10,9 @@ A comprehensive Retrieval-Augmented Generation (RAG) system with agentic capabil
 - **Hybrid Retrieval**: Combines vector similarity search with keyword-based re-ranking
 - **Document Refinement**: Filters and summarizes retrieved documents for better context
 - **Agentic Decision Making**: LLM autonomously decides when to use RAG vs. direct answers
+- **Batch Verification**: Optimized source fact-checking using LLM batch processing
+- **Intelligent Caching**: Caches verification results to reduce API costs and latency
+- **API Usage Monitoring**: Real-time tracking of token usage and estimated costs
 - **Iterative Refinement**: Automatically retries with rewritten queries if initial retrieval fails
 
 ### 🔧 Key Components

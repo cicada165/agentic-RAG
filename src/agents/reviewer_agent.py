@@ -14,7 +14,7 @@ async def verify_source(
     source: Source,
     query: str,
     llm_client: Optional[Any] = None
-) -> Tuple[bool, float]:
+) -> Tuple[bool, float, Any]:
     """
     Verifies a single source for factual accuracy and relevance using LLM.
     
@@ -24,22 +24,28 @@ async def verify_source(
         llm_client: LLM client instance (required for intelligent verification)
         
     Returns:
-        tuple[bool, float]: (is_verified, confidence_score)
+        tuple[bool, float, TokenUsage]: (is_verified, confidence_score, token_usage)
             - is_verified: Whether source passes verification
             - confidence_score: Confidence level 0.0-1.0
+            - token_usage: Usage for this call
     """
+    from ..models import TokenUsage
+    from ..utils.monitoring import UsageTracker
+    from ..utils.config import Config
+    
     # 1. HARD FILTER: Garbage Snippets
-    if not source.snippet or len(source.snippet) < 50:  # Increased threshold from 20 to 50
-        return False, 0.0
+    config = Config.load()
+    if not source.snippet or len(source.snippet) < config.MIN_SOURCE_SNIPPET_LENGTH:
+        return False, 0.0, TokenUsage()
     
     if not source.url or not source.title:
-        return False, 0.0
+        return False, 0.0, TokenUsage()
     
     # 2. INTELLIGENT FILTER: Ask the LLM
     # If we are in "Mock" mode or no client, fallback to math
     if not llm_client:
         # Fallback to relevance score check
-        return source.relevance_score > 0.4, source.relevance_score
+        return source.relevance_score > config.VERIFICATION_FALLBACK_RELEVANCE, source.relevance_score, TokenUsage()
     
     # Use LLM to verify if snippet actually answers the query
     prompt = f"""Verify if this text answers the query: "{query}"
@@ -49,13 +55,18 @@ Return YES only if the text contains specific facts/data. Return NO if it is gen
 
     try:
         response = await llm_client.ainvoke(prompt)  # Async call
+        
+        # Extract usage
+        config = Config.load()
+        usage = UsageTracker.extract_usage(response, config.LLM_MODEL)
+        
         content = response.content if hasattr(response, 'content') else str(response)
         is_valid = "YES" in content.upper()
-        return is_valid, 0.9 if is_valid else 0.1
+        return is_valid, 0.9 if is_valid else 0.1, usage
     except Exception as e:
         logger.warning(f"LLM verification failed: {e}. Falling back to relevance score.")
         # Fallback to relevance score if LLM fails
-        return source.relevance_score > 0.4, source.relevance_score
+        return source.relevance_score > config.VERIFICATION_FALLBACK_RELEVANCE, source.relevance_score, TokenUsage()
 
 
 async def detect_conflicts(
@@ -125,6 +136,158 @@ def calculate_confidence_score(
     return max(0.0, min(1.0, confidence))
 
 
+async def verify_sources_batch(
+    sources: List[Source],
+    query: str,
+    llm_client: Optional[Any] = None
+) -> Tuple[List[Tuple[bool, float]], Any]:
+    """
+    Verifies multiple sources in a batch using LLM to reduce API calls.
+    Uses caching to avoid re-verifying known sources.
+    
+    Args:
+        sources: List of sources to verify
+        query: Original research query
+        llm_client: LLM client instance
+        
+    Returns:
+        tuple[List[Tuple[bool, float]], TokenUsage]: 
+            (List of (is_verified, confidence) tuples, token_usage)
+    """
+    from ..utils.cache import VerificationCache
+    from ..models import TokenUsage
+    from ..utils.monitoring import UsageTracker
+    
+    cache = VerificationCache()
+    
+    results: List[Optional[Tuple[bool, float]]] = [None] * len(sources)
+    total_usage = TokenUsage()
+    
+    # 1. Check Cache First
+    uncached_indices = []
+    uncached_sources = []
+    
+    for i, source in enumerate(sources):
+        if not source.url: # Can't cache without URL
+            results[i] = (False, 0.0)
+            continue
+            
+        cached_result = cache.get(query, source.url)
+        if cached_result:
+            results[i] = cached_result
+        else:
+            uncached_indices.append(i)
+            uncached_sources.append(source)
+            
+    # If all were cached, return immediately!
+    if not uncached_indices:
+        return [r for r in results if r is not None], total_usage
+        
+    # 2. Process Uncached Sources (Same logic as before, but only for uncached)
+    
+    # If no LLM client, fallback to simple relevance check for all uncached
+    if not llm_client:
+        for i, source in enumerate(uncached_sources):
+            original_idx = uncached_indices[i]
+            # Hard filter first
+            config = Config.load()
+            if not source.snippet or len(source.snippet) < config.MIN_SOURCE_SNIPPET_LENGTH:
+                 res = (False, 0.0)
+            else:
+                 res = (source.relevance_score > config.VERIFICATION_FALLBACK_RELEVANCE, source.relevance_score)
+            
+            results[original_idx] = res
+            if source.url:
+                cache.set(query, source.url, res)
+        return [r for r in results if r is not None], total_usage
+
+    # Filter out obvious garbage from uncached sources
+    valid_batch_indices = [] # Indices into uncached_sources/uncached_indices
+    clean_sources = []
+    
+    config = Config.load()
+    for i, source in enumerate(uncached_sources):
+        original_idx = uncached_indices[i]
+        if not source.snippet or len(source.snippet) < config.MIN_SOURCE_SNIPPET_LENGTH:
+             res = (False, 0.0)
+             results[original_idx] = res
+             if source.url:
+                cache.set(query, source.url, res)
+        else:
+            valid_batch_indices.append(i)
+            clean_sources.append(source)
+            
+    if not clean_sources:
+        return [r for r in results if r is not None], total_usage
+
+    # Construct batch prompt for remaining clean sources
+    sources_text = ""
+    for i, source in enumerate(clean_sources):
+        sources_text += f"\nSOURCE {i+1}:\n{source.snippet}\n"
+        
+    prompt = f"""Verify if the following sources answer the query: "{query}"
+
+{sources_text}
+
+For each source, determine if it contains specific facts/data (VALID) or is generic SEO spam (INVALID).
+Return a JSON list of objects with 'id' (1-based index) and 'valid' (boolean).
+Example: [{{"id": 1, "valid": true}}, {{"id": 2, "valid": false}}]
+"""
+
+    try:
+        response = await llm_client.ainvoke(prompt)
+        
+        # Extract usage
+        config = Config.load()
+        usage = UsageTracker.extract_usage(response, config.LLM_MODEL)
+        total_usage = total_usage + usage
+        
+        content = response.content if hasattr(response, 'content') else str(response)
+        
+        # Clean up markdown code blocks if present
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0]
+            
+        import json
+        batch_results = json.loads(content.strip())
+        
+        # Map back to results
+        result_map = {item['id']: item['valid'] for item in batch_results if 'id' in item and 'valid' in item}
+        
+        for i, batch_idx in enumerate(valid_batch_indices):
+            # source index in batch is i+1
+            is_valid = result_map.get(i+1, False)
+            res = (is_valid, 0.9 if is_valid else 0.1)
+            
+            # Map back to original sources list
+            original_idx = uncached_indices[batch_idx]
+            results[original_idx] = res
+            
+            # Update cache
+            source = clean_sources[i]
+            if source.url:
+                cache.set(query, source.url, res)
+            
+    except Exception as e:
+        logger.warning(f"Batch verification failed: {e}. Falling back to individual verification.")
+        # Fallback to individual verification for clean sources
+        for i, batch_idx in enumerate(valid_batch_indices):
+            original_idx = uncached_indices[batch_idx]
+            is_valid, confidence, usage = await verify_source(clean_sources[i], query, llm_client)
+            total_usage = total_usage + usage
+            res = (is_valid, confidence)
+            results[original_idx] = res
+            
+            # Check source url before caching
+            source = clean_sources[i]
+            if source.url:
+                cache.set(query, source.url, res)
+            
+    return [r for r in results if r is not None], total_usage
+
+
 async def review_node(state: dict) -> dict:
     """
     LangGraph node function for review phase.
@@ -159,13 +322,27 @@ async def review_node(state: dict) -> dict:
             logger.warning(f"Could not create LLM client for verification: {e}. Using fallback verification.")
             llm_client = None
         
-        # Verify each source with LLM
+        # Batch verify sources
+        logger.info(f"Verifying {len(sources)} sources in batch...")
+        verification_results, usage = await verify_sources_batch(sources, query, llm_client)
+        
+        # Track usage
+        if "usage" not in state or state["usage"] is None:
+            from ..models import TokenUsage
+            state["usage"] = TokenUsage().model_dump()
+            
+        current_usage = state["usage"]
+        current_usage["prompt_tokens"] = current_usage.get("prompt_tokens", 0) + usage.prompt_tokens
+        current_usage["completion_tokens"] = current_usage.get("completion_tokens", 0) + usage.completion_tokens
+        current_usage["total_tokens"] = current_usage.get("total_tokens", 0) + usage.total_tokens
+        current_usage["estimated_cost_usd"] = current_usage.get("estimated_cost_usd", 0.0) + usage.estimated_cost_usd
+        state["usage"] = current_usage
+        
         verified_sources = []
-        for source in sources:
-            is_verified, confidence = await verify_source(source, query, llm_client=llm_client)
+        for i, (is_verified, _) in enumerate(verification_results):
             if is_verified:
-                source.verified = True
-                verified_sources.append(source)
+                sources[i].verified = True
+                verified_sources.append(sources[i])
         
         # Detect conflicts
         conflicts = await detect_conflicts(verified_sources, query)
@@ -174,23 +351,26 @@ async def review_node(state: dict) -> dict:
         confidence_score = calculate_confidence_score(verified_sources, conflicts)
         
         # QUALITY CHECK: If insufficient verified sources, trigger revision loop
-        min_verified_sources = 2  # Minimum required verified sources
+        config = Config.load()
+        min_verified_sources = config.MIN_VERIFIED_SOURCES
         iteration_count = state.get("iteration_count", 0)
         max_iterations = state.get("max_iterations", 5)
         
         if len(verified_sources) < min_verified_sources:
             # Check if we've exceeded max iterations
             if iteration_count >= max_iterations:
-                logger.warning(f"Max iterations reached ({max_iterations}). Proceeding with {len(verified_sources)} sources.")
+                msg = f"Max iterations reached ({max_iterations}). Proceeding with {len(verified_sources)} verified sources."
+                logger.warning(msg)
                 # Continue anyway if max iterations reached
             else:
-                logger.warning(f"Quality check failed. Verified sources: {len(verified_sources)}/{min_verified_sources}. Triggering revision.")
+                msg = f"Quality check failed. Verified sources: {len(verified_sources)}/{min_verified_sources}. Found {len(sources)} total sources. Triggering revision."
+                logger.warning(msg)
                 
                 return {
                     **state,  # Preserve existing state (query, id, etc.)
                     "status": ResearchStatus.NEEDS_REVISION.value,
                     "iteration_count": iteration_count + 1,
-                    "error_message": f"Insufficient verified sources (found {len(verified_sources)}/{min_verified_sources}). Try broader search terms.",
+                    "error_message": msg,
                     "sources": [],  # Clear bad sources so Researcher starts fresh
                     "search_queries": [],  # Clear old queries to force generation of new ones
                     "current_agent": "reviewer",

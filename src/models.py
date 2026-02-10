@@ -33,6 +33,22 @@ class Source(BaseModel):
     )
 
 
+class TokenUsage(BaseModel):
+    """Tracking for LLM token usage and costs"""
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    total_tokens: int = Field(default=0)
+    estimated_cost_usd: float = Field(default=0.0)
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+            estimated_cost_usd=self.estimated_cost_usd + other.estimated_cost_usd
+        )
+
+
 class ResearchState(BaseModel):
     """Main state model for research workflow"""
     # User Input
@@ -44,6 +60,9 @@ class ResearchState(BaseModel):
     current_agent: Optional[str] = Field(default=None, description="Currently active agent")
     iteration_count: int = Field(default=0, ge=0, description="Number of research iterations")
     max_iterations: int = Field(default=5, ge=1, le=10, description="Maximum research iterations")
+    
+    # Usage Tracking
+    usage: TokenUsage = Field(default_factory=TokenUsage, description="Cumulative token usage")
     
     # Research Results
     sources: List[Source] = Field(default_factory=list, description="Collected sources")
@@ -77,6 +96,7 @@ class AgentResponse(BaseModel):
     status: Literal["success", "partial", "failed"]
     message: str
     data: dict = Field(default_factory=dict)
+    usage: TokenUsage = Field(default_factory=TokenUsage)
     timestamp: datetime = Field(default_factory=datetime.now)
 
     model_config = ConfigDict(

@@ -18,19 +18,19 @@ def create_llm_client(
     timeout: Optional[int] = None
 ):
     """
-    Creates an OpenAI-compatible LLM client instance (configured for DeepSeek).
+    Creates an OpenAI-compatible LLM client instance (configured for configured provider).
     
     Args:
-        model: Model name (defaults to config.DEEPSEEK_MODEL)
+        model: Model name (defaults to config.LLM_MODEL)
         temperature: Temperature setting (defaults to config.LLM_TEMPERATURE)
         max_tokens: Max tokens (defaults to config.LLM_MAX_TOKENS)
         timeout: Timeout in seconds (defaults to config.LLM_TIMEOUT_SECONDS)
         
     Returns:
-        ChatOpenAI: Configured OpenAI client instance pointing to DeepSeek
+        ChatOpenAI: Configured OpenAI client instance
         
     Raises:
-        ConfigError: If DeepSeek API key is not configured
+        ConfigError: If LLM API key is not configured
         ImportError: If langchain-openai is not installed
     """
     if ChatOpenAI is None:
@@ -41,26 +41,26 @@ def create_llm_client(
     config = Config.load()
     
     # Use provided values or fall back to config defaults
-    model_name = model or config.DEEPSEEK_MODEL
+    model_name = model or config.LLM_MODEL
     temp = temperature if temperature is not None else config.LLM_TEMPERATURE
     max_toks = max_tokens or config.LLM_MAX_TOKENS
     timeout_sec = timeout or config.LLM_TIMEOUT_SECONDS
     
     # Validate API key
-    if not config.DEEPSEEK_API_KEY:
+    if not config.LLM_API_KEY:
         raise ConfigError(
-            "DEEPSEEK_API_KEY is required. Set it in .env file or Streamlit secrets."
+            "LLM_API_KEY is required. Set it in .env file or Streamlit secrets."
         )
     
     try:
         client = ChatOpenAI(
             model=model_name,
-            api_key=config.DEEPSEEK_API_KEY,
-            base_url=config.DEEPSEEK_BASE_URL,
+            api_key=config.LLM_API_KEY,
+            base_url=config.LLM_BASE_URL,
             temperature=temp,
             max_tokens=max_toks,
             timeout=timeout_sec
         )
         return client
     except Exception as e:
-        raise LLMException(f"Failed to create DeepSeek client: {str(e)}")
+        raise LLMException(f"Failed to create LLM client: {str(e)}")
