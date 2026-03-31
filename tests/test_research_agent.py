@@ -13,23 +13,29 @@ from src.models import Source
 @pytest.mark.asyncio
 async def test_generate_search_queries():
     """Test search query generation"""
-    queries = await generate_search_queries("test query", max_queries=3)
+    queries, usage = await generate_search_queries("test query", max_queries=3)
     
     assert isinstance(queries, list)
     assert len(queries) > 0
     assert "test query" in queries[0] or queries[0] == "test query"
+    assert hasattr(usage, 'prompt_tokens')
+
 
 
 @pytest.mark.asyncio
 async def test_perform_web_search_no_key(monkeypatch):
     """Test web search without API key (should return mock results)"""
-    # Set a dummy API key to pass config validation
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    # Clear any existing API keys to force mock behavior
+    monkeypatch.setenv("SEARCH_API_KEY", "")
+    monkeypatch.setenv("TAVILY_API_KEY", "")
+    monkeypatch.setenv("LLM_API_KEY", "test-key") # Required by Config.load()
+    
     results = await perform_web_search("test query", max_results=5, api_key=None)
     
     assert isinstance(results, list)
     assert len(results) > 0
     assert "url" in results[0]
+
     assert "title" in results[0]
     assert "snippet" in results[0]
 
